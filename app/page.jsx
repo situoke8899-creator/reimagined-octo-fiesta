@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const REFRESH_MS = 5000
 const SHAPES = ['豹子', '顺子', '对子', '杂六', '半顺']
-const FREEZE_VERSION = 'hash-last5-shape-v1'
+const FREEZE_VERSION = 'hash-last5-shape-top2-v2'
 
 function fmtPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`
@@ -454,12 +454,6 @@ function getOrCreateFreeze(draw, strategies) {
       frontShape: draw.frontShape,
       middleShape: draw.middleShape,
       backShape: draw.backShape,
-      predictedFrontShapes:
-        frozenStrategy.frontShapes || [],
-      predictedMiddleShapes:
-        frozenStrategy.middleShapes || [],
-      predictedBackShapes:
-        frozenStrategy.backShapes || [],
     },
     strategies: strategies.map(compactStrategy),
     createdAt: Date.now(),
@@ -536,6 +530,12 @@ function buildFrozenStats(rows, strategy, size) {
       frontShape: draw.frontShape,
       middleShape: draw.middleShape,
       backShape: draw.backShape,
+      predictedFrontShapes:
+        frozenStrategy.frontShapes || [],
+      predictedMiddleShapes:
+        frozenStrategy.middleShapes || [],
+      predictedBackShapes:
+        frozenStrategy.backShapes || [],
       frontHit,
       middleHit,
       backHit,
@@ -693,13 +693,18 @@ export default function Page() {
       return
     }
 
-    setFrozenRows(
-      syncFreezes(
-        history,
-        strategies,
-        data
+    try {
+      setFrozenRows(
+        syncFreezes(
+          history,
+          strategies,
+          data
+        )
       )
-    )
+    } catch (error) {
+      console.error('冻结同步失败：', error)
+      setFrozenRows([])
+    }
   }, [history, strategies, data?.nextBlock])
 
   const ranked = useMemo(
@@ -725,9 +730,9 @@ export default function Page() {
 
     const text = [
       `最优形态方案：${best.name}`,
-      `前三：${row.predictedFrontShapes.join('、')}`,
-      `中三：${row.predictedMiddleShapes.join('、')}`,
-      `后三：${row.predictedBackShapes.join('、')}`,
+      `前三：${best.frontShapes.join('、')}`,
+      `中三：${best.middleShapes.join('、')}`,
+      `后三：${best.backShapes.join('、')}`,
       `冻结20期：${fmtPercent(best.f20.hitRate)}`,
       `冻结30期：${fmtPercent(best.f30.hitRate)}`,
       `冻结50期：${fmtPercent(best.f50.hitRate)}`,
