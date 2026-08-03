@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const REFRESH_MS = 5000
-const SHAPES = ['豹子', '顺子', '对子', '杂六', '半顺']
+const SHAPES = ['杂六', '半顺', '对子']
 const FREEZE_VERSION = 'hash-last5-shape-single-v6'
 
 function fmtPercent(value) {
@@ -731,24 +731,52 @@ function buildSinglePriorityPrediction(rankedStrategies) {
         rate50,
         currentMiss,
         maxMiss,
-        missPriority: currentMiss >= 3,
+        missPriority:
+          (
+            segment.shape === '杂六' ||
+            segment.shape === '半顺'
+          ) &&
+          currentMiss >= 3,
         score,
       })
     }
   }
 
   return candidates.sort((a, b) => {
-    if (a.missPriority !== b.missPriority) {
-      return Number(b.missPriority) -
-        Number(a.missPriority)
+    const aPrimary =
+      a.shape === '杂六' ||
+      a.shape === '半顺'
+
+    const bPrimary =
+      b.shape === '杂六' ||
+      b.shape === '半顺'
+
+    const aMissPriority =
+      aPrimary &&
+      a.currentMiss >= 3
+
+    const bMissPriority =
+      bPrimary &&
+      b.currentMiss >= 3
+
+    // 杂六/半顺错3期以上最优先
+    if (aMissPriority !== bMissPriority) {
+      return Number(bMissPriority) -
+        Number(aMissPriority)
     }
 
     if (
-      a.missPriority &&
-      b.missPriority &&
+      aMissPriority &&
+      bMissPriority &&
       b.currentMiss !== a.currentMiss
     ) {
       return b.currentMiss - a.currentMiss
+    }
+
+    // 没有错3期候选时，仍优先杂六和半顺
+    if (aPrimary !== bPrimary) {
+      return Number(bPrimary) -
+        Number(aPrimary)
     }
 
     if (b.score !== a.score) {
@@ -1033,14 +1061,15 @@ export default function Page() {
       <div className="wrap">
         <section className="hero">
           <div className="card">
-            <h1>哈希倒数5个数字｜单形态优先推荐系统</h1>
+            <h1>哈希倒数5个数字｜杂六半顺优先系统</h1>
 
             <p className="muted">
               从哈希最右侧开始向左取5个数字，字母全部忽略。
               下一期只推荐一个位置和一个形态。
-              例如推荐“前三：杂六”，实际前三开出杂六才算中奖；
-              中三和后三不参与这次推荐结果。优先选择当前连续错3期以上的候选，
-              没有错3期候选时，再选择近20/30/50期综合中奖率最高的候选。
+              预测范围只保留“杂六、半顺、对子”，不再预测豹子和顺子。
+              优先从杂六、半顺中选择当前连续错3期以上的候选；
+              没有错3期候选时，再选择杂六或半顺中近20/30/50期综合中奖率最高的。
+              对子只作为兜底，不放在优先推荐。
             </p>
 
             <div className="best">
@@ -1059,8 +1088,10 @@ export default function Page() {
                         {singleRecommendation.strategyName}
                         {' ｜ '}
                         {singleRecommendation.missPriority
-                          ? `当前连续错${singleRecommendation.currentMiss}期，优先推荐`
-                          : '按综合中奖率最高推荐'}
+                          ? `杂六/半顺当前连续错${singleRecommendation.currentMiss}期，优先推荐`
+                          : singleRecommendation.shape === '对子'
+                          ? '对子仅作为兜底推荐'
+                          : '按杂六/半顺综合中奖率最高推荐'}
                       </div>
                     </div>
 
