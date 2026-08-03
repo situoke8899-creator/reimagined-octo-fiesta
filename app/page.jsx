@@ -514,11 +514,6 @@ function buildFrozenStats(rows, strategy, size) {
         draw.backShape
       )
 
-    const hit =
-      frontHit &&
-      middleHit &&
-      backHit
-
     return {
       block: draw.block,
       openTime: draw.openTime,
@@ -539,24 +534,61 @@ function buildFrozenStats(rows, strategy, size) {
       frontHit,
       middleHit,
       backHit,
-      hit,
+      anyHit:
+        frontHit ||
+        middleHit ||
+        backHit,
       backfilled: Boolean(record?.backfilled),
     }
   })
 
-  const results = details.map((item) => item.hit)
-  const hitCount = details.filter((item) => item.hit).length
+  const frontResults = details.map((item) => item.frontHit)
+  const middleResults = details.map((item) => item.middleHit)
+  const backResults = details.map((item) => item.backHit)
+  const anyResults = details.map((item) => item.anyHit)
+
+  const frontHitCount = details.filter((item) => item.frontHit).length
+  const middleHitCount = details.filter((item) => item.middleHit).length
+  const backHitCount = details.filter((item) => item.backHit).length
+  const anyHitCount = details.filter((item) => item.anyHit).length
+
+  const testedCount = details.length
 
   return {
     rows: details,
-    testedCount: details.length,
-    hitCount,
-    hitRate:
-      details.length
-        ? (hitCount / details.length) * 100
+    testedCount,
+
+    frontHitCount,
+    frontHitRate:
+      testedCount
+        ? (frontHitCount / testedCount) * 100
         : 0,
-    maxMiss: calcMaxMiss(results),
-    currentMiss: calcCurrentMiss(results),
+    frontMaxMiss: calcMaxMiss(frontResults),
+    frontCurrentMiss: calcCurrentMiss(frontResults),
+
+    middleHitCount,
+    middleHitRate:
+      testedCount
+        ? (middleHitCount / testedCount) * 100
+        : 0,
+    middleMaxMiss: calcMaxMiss(middleResults),
+    middleCurrentMiss: calcCurrentMiss(middleResults),
+
+    backHitCount,
+    backHitRate:
+      testedCount
+        ? (backHitCount / testedCount) * 100
+        : 0,
+    backMaxMiss: calcMaxMiss(backResults),
+    backCurrentMiss: calcCurrentMiss(backResults),
+
+    anyHitCount,
+    anyHitRate:
+      testedCount
+        ? (anyHitCount / testedCount) * 100
+        : 0,
+    anyMaxMiss: calcMaxMiss(anyResults),
+    anyCurrentMiss: calcCurrentMiss(anyResults),
   }
 }
 
@@ -579,18 +611,56 @@ function rankStrategies(frozenRows, strategies) {
         50
       )
 
+      const average20 =
+        (
+          f20.frontHitRate +
+          f20.middleHitRate +
+          f20.backHitRate
+        ) / 3
+
+      const average30 =
+        (
+          f30.frontHitRate +
+          f30.middleHitRate +
+          f30.backHitRate
+        ) / 3
+
+      const average50 =
+        (
+          f50.frontHitRate +
+          f50.middleHitRate +
+          f50.backHitRate
+        ) / 3
+
+      const averageCurrentMiss =
+        (
+          f20.frontCurrentMiss +
+          f20.middleCurrentMiss +
+          f20.backCurrentMiss
+        ) / 3
+
+      const averageMaxMiss =
+        (
+          f20.frontMaxMiss +
+          f20.middleMaxMiss +
+          f20.backMaxMiss
+        ) / 3
+
       const score =
-        f20.hitRate * 0.5 +
-        f30.hitRate * 0.3 +
-        f50.hitRate * 0.2 -
-        f20.maxMiss * 1.2 -
-        f20.currentMiss * 0.6
+        average20 * 0.5 +
+        average30 * 0.3 +
+        average50 * 0.2 -
+        averageMaxMiss * 1.2 -
+        averageCurrentMiss * 0.6
 
       return {
         ...strategy,
         f20,
         f30,
         f50,
+        average20,
+        average30,
+        average50,
         score,
       }
     })
@@ -599,11 +669,19 @@ function rankStrategies(frozenRows, strategies) {
         return b.score - a.score
       }
 
-      if (b.f20.hitRate !== a.f20.hitRate) {
-        return b.f20.hitRate - a.f20.hitRate
+      if (b.average20 !== a.average20) {
+        return b.average20 - a.average20
       }
 
-      return a.f20.maxMiss - b.f20.maxMiss
+      return (
+        a.f20.frontCurrentMiss +
+        a.f20.middleCurrentMiss +
+        a.f20.backCurrentMiss
+      ) - (
+        b.f20.frontCurrentMiss +
+        b.f20.middleCurrentMiss +
+        b.f20.backCurrentMiss
+      )
     })
 }
 
@@ -733,9 +811,15 @@ export default function Page() {
       `前三：${best.frontShapes.join('、')}`,
       `中三：${best.middleShapes.join('、')}`,
       `后三：${best.backShapes.join('、')}`,
-      `冻结20期：${fmtPercent(best.f20.hitRate)}`,
-      `冻结30期：${fmtPercent(best.f30.hitRate)}`,
-      `冻结50期：${fmtPercent(best.f50.hitRate)}`,
+      `前三20期：${fmtPercent(best.f20.frontHitRate)}`,
+      `中三20期：${fmtPercent(best.f20.middleHitRate)}`,
+      `后三20期：${fmtPercent(best.f20.backHitRate)}`,
+      `前三30期：${fmtPercent(best.f30.frontHitRate)}`,
+      `中三30期：${fmtPercent(best.f30.middleHitRate)}`,
+      `后三30期：${fmtPercent(best.f30.backHitRate)}`,
+      `前三50期：${fmtPercent(best.f50.frontHitRate)}`,
+      `中三50期：${fmtPercent(best.f50.middleHitRate)}`,
+      `后三50期：${fmtPercent(best.f50.backHitRate)}`,
     ].join('｜')
 
     try {
@@ -773,7 +857,7 @@ export default function Page() {
         .shape-对子{background:#f97316}
         .shape-杂六{background:#0ea5e9}
         .shape-半顺{background:#22c55e;color:#052e16}
-        .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+        .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}.segment-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}.segment-stat{padding:12px;border-radius:12px;background:rgba(2,6,23,.34);border:1px solid rgba(148,163,184,.15)}.segment-stat h3{margin:0 0 9px;color:#86efac}.segment-rate-row{display:grid;grid-template-columns:58px 78px 1fr;gap:8px;align-items:center;padding:6px 0;border-top:1px solid rgba(148,163,184,.1)}.segment-rate-row strong{color:#4ade80}
         .stat{padding:12px;border-radius:12px;background:rgba(2,6,23,.34);border:1px solid rgba(148,163,184,.15)}
         .stat strong{display:block;font-size:22px;color:#4ade80;margin:4px 0}
         .latest-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -797,7 +881,7 @@ export default function Page() {
         .triple{padding:8px;border-radius:10px;background:rgba(2,6,23,.3);border:1px solid rgba(148,163,184,.13)}
         @media(max-width:900px){
           .hero,.grid{display:block}
-          .stats,.latest-grid,.freeze-grid,.triples{grid-template-columns:1fr}
+          .stats,.segment-stats,.latest-grid,.freeze-grid,.triples{grid-template-columns:1fr}
           .page{padding:12px}
         }
       `}</style>
@@ -811,7 +895,8 @@ export default function Page() {
               从区块哈希末尾向前寻找5个数字，英文字母全部忽略。
               取前三位、中间三位、后三位，分别判断：
               豹子、顺子、对子、杂六、半顺。每一段只预测排名最高的两个形态；
-              例如前三预测“对子、杂六”，实际开出其中任意一个即算前三命中。
+              例如前三预测“对子、杂六”，实际前三开出其中任意一个即算前三中奖。
+              前三、中三、后三完全分开统计，互不影响；只要任意一段命中，就显示该段中奖。
             </p>
 
             <div className="best">
@@ -867,33 +952,55 @@ export default function Page() {
                     </div>
                   </div>
 
-                  <div className="stats">
-                    <div className="stat">
-                      <div className="label">冻结近20期</div>
-                      <strong>{fmtPercent(best.f20.hitRate)}</strong>
-                      <div className="muted">
-                        {best.f20.hitCount}/{best.f20.testedCount}
-                        ｜当前连错{best.f20.currentMiss}
-                      </div>
-                    </div>
+                  <div className="segment-stats">
+                    {[
+                      ['前三', 'front'],
+                      ['中三', 'middle'],
+                      ['后三', 'back'],
+                    ].map(([label, key]) => (
+                      <div className="segment-stat" key={key}>
+                        <h3>{label}独立中奖率</h3>
 
-                    <div className="stat">
-                      <div className="label">冻结近30期</div>
-                      <strong>{fmtPercent(best.f30.hitRate)}</strong>
-                      <div className="muted">
-                        {best.f30.hitCount}/{best.f30.testedCount}
-                        ｜当前连错{best.f30.currentMiss}
-                      </div>
-                    </div>
+                        <div className="segment-rate-row">
+                          <span>近20期</span>
+                          <strong>
+                            {fmtPercent(best.f20[`${key}HitRate`])}
+                          </strong>
+                          <span>
+                            {best.f20[`${key}HitCount`]}/
+                            {best.f20.testedCount}
+                            ｜连错
+                            {best.f20[`${key}CurrentMiss`]}
+                          </span>
+                        </div>
 
-                    <div className="stat">
-                      <div className="label">冻结近50期</div>
-                      <strong>{fmtPercent(best.f50.hitRate)}</strong>
-                      <div className="muted">
-                        {best.f50.hitCount}/{best.f50.testedCount}
-                        ｜当前连错{best.f50.currentMiss}
+                        <div className="segment-rate-row">
+                          <span>近30期</span>
+                          <strong>
+                            {fmtPercent(best.f30[`${key}HitRate`])}
+                          </strong>
+                          <span>
+                            {best.f30[`${key}HitCount`]}/
+                            {best.f30.testedCount}
+                            ｜连错
+                            {best.f30[`${key}CurrentMiss`]}
+                          </span>
+                        </div>
+
+                        <div className="segment-rate-row">
+                          <span>近50期</span>
+                          <strong>
+                            {fmtPercent(best.f50[`${key}HitRate`])}
+                          </strong>
+                          <span>
+                            {best.f50[`${key}HitCount`]}/
+                            {best.f50.testedCount}
+                            ｜连错
+                            {best.f50[`${key}CurrentMiss`]}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 </>
               ) : (
@@ -1001,10 +1108,10 @@ export default function Page() {
                     <th>前三双选</th>
                     <th>中三双选</th>
                     <th>后三双选</th>
-                    <th>冻结20</th>
-                    <th>冻结30</th>
-                    <th>冻结50</th>
-                    <th>最大连错</th>
+                    <th>前三20/30/50</th>
+                    <th>中三20/30/50</th>
+                    <th>后三20/30/50</th>
+                    <th>平均评分</th>
                   </tr>
                 </thead>
 
@@ -1035,34 +1142,25 @@ export default function Page() {
                           ))}
                         </div>
                       </td>
-                      <td className={
-                        item.f20.hitRate >= 20
-                          ? 'good'
-                          : item.f20.hitRate >= 10
-                          ? 'mid'
-                          : 'bad'
-                      }>
-                        {fmtPercent(item.f20.hitRate)}
-                        <div className="muted">
-                          {item.f20.hitCount}/{item.f20.testedCount}
-                        </div>
+                      <td>
+                        <div>20：{fmtPercent(item.f20.frontHitRate)}</div>
+                        <div>30：{fmtPercent(item.f30.frontHitRate)}</div>
+                        <div>50：{fmtPercent(item.f50.frontHitRate)}</div>
                       </td>
                       <td>
-                        {fmtPercent(item.f30.hitRate)}
-                        <div className="muted">
-                          {item.f30.hitCount}/{item.f30.testedCount}
-                        </div>
+                        <div>20：{fmtPercent(item.f20.middleHitRate)}</div>
+                        <div>30：{fmtPercent(item.f30.middleHitRate)}</div>
+                        <div>50：{fmtPercent(item.f50.middleHitRate)}</div>
                       </td>
                       <td>
-                        {fmtPercent(item.f50.hitRate)}
-                        <div className="muted">
-                          {item.f50.hitCount}/{item.f50.testedCount}
-                        </div>
+                        <div>20：{fmtPercent(item.f20.backHitRate)}</div>
+                        <div>30：{fmtPercent(item.f30.backHitRate)}</div>
+                        <div>50：{fmtPercent(item.f50.backHitRate)}</div>
                       </td>
                       <td>
-                        {item.f50.maxMiss}
+                        <strong>{item.score.toFixed(2)}</strong>
                         <div className="muted">
-                          当前{item.f20.currentMiss}
+                          20期平均{fmtPercent(item.average20)}
                         </div>
                       </td>
                     </tr>
@@ -1076,7 +1174,8 @@ export default function Page() {
 
               <p className="muted">
                 每一段有两个预测形态，实际开出其中任意一个即算该段命中。
-                同一期必须前三、中三、后三三段全部命中，才算整套方案命中。下一期开奖前冻结方案；
+                前三、中三、后三分别独立判断，不再要求三段全部命中。
+                任意一段开出其两个预测形态之一，该段就视为中奖。下一期开奖前冻结方案；
                 开奖后只追加中/未中，后续刷新不改写。
               </p>
 
@@ -1090,9 +1189,9 @@ export default function Page() {
                       <strong>区块 {row.block}</strong>
 
                       <span className={
-                        row.hit ? 'good' : 'bad'
+                        row.anyHit ? 'good' : 'bad'
                       }>
-                        {row.hit ? '整套命中' : '整套未中'}
+                        {row.anyHit ? '至少一段中奖' : '三段均未中'}
                       </span>
                     </div>
 
@@ -1194,14 +1293,14 @@ export default function Page() {
               </p>
 
               <p className="muted">
-                中奖返还：
+                单段中奖返还：
                 {winReturn.toFixed(2)}
               </p>
 
               <p className={
                 profit >= 0 ? 'good' : 'bad'
               }>
-                中奖净盈利：
+                单段中奖时净盈利：
                 {profit.toFixed(2)}
               </p>
 
