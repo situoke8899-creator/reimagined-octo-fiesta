@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const REFRESH_MS = 5000
 const SHAPES = ['豹子', '顺子', '对子', '杂六', '半顺']
-const FREEZE_VERSION = 'hash-last5-shape-top2-v2'
+const FREEZE_VERSION = 'hash-last5-shape-single-v6'
 
 function fmtPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`
@@ -55,7 +55,8 @@ function getLastFiveDigits(hash) {
 
   if (digits.length < 5) return ''
 
-  return digits.reverse().join('')
+  // 从哈希最右侧开始向左取5个数字，按取到的顺序直接使用。
+  return digits.join('')
 }
 
 function classifyThree(value) {
@@ -229,21 +230,11 @@ function rankShapes(history, field, config = {}) {
     })
 }
 
-function pickTwoShapes(history, field, config) {
-  const ranked = rankShapes(history, field, config)
-    .slice(0, 2)
-    .map((item) => item.shape)
-
-  while (ranked.length < 2) {
-    const next = SHAPES.find(
-      (shape) => !ranked.includes(shape)
-    )
-
-    if (!next) break
-    ranked.push(next)
-  }
-
-  return ranked
+function pickOneShape(history, field, config) {
+  return [
+    rankShapes(history, field, config)[0]?.shape ||
+    '杂六'
+  ]
 }
 
 function buildStrategies(history) {
@@ -350,17 +341,17 @@ function buildStrategies(history) {
 
   return configs.map((item) => ({
     ...item,
-    frontShapes: pickTwoShapes(
+    frontShapes: pickOneShape(
       history,
       'frontShape',
       item.config
     ),
-    middleShapes: pickTwoShapes(
+    middleShapes: pickOneShape(
       history,
       'middleShape',
       item.config
     ),
-    backShapes: pickTwoShapes(
+    backShapes: pickOneShape(
       history,
       'backShape',
       item.config
@@ -685,6 +676,149 @@ function rankStrategies(frozenRows, strategies) {
     })
 }
 
+
+function buildSinglePriorityPrediction(rankedStrategies) {
+  const candidates = []
+
+  for (const strategy of rankedStrategies || []) {
+    const segments = [
+      {
+        key: 'front',
+        label: '前三',
+        shape: strategy.frontShapes?.[0] || '',
+      },
+      {
+        key: 'middle',
+        label: '中三',
+        shape: strategy.middleShapes?.[0] || '',
+      },
+      {
+        key: 'back',
+        label: '后三',
+        shape: strategy.backShapes?.[0] || '',
+      },
+    ]
+
+    for (const segment of segments) {
+      if (!segment.shape) continue
+
+      const rate20 =
+        strategy.f20?.[`${segment.key}HitRate`] || 0
+      const rate30 =
+        strategy.f30?.[`${segment.key}HitRate`] || 0
+      const rate50 =
+        strategy.f50?.[`${segment.key}HitRate`] || 0
+      const currentMiss =
+        strategy.f20?.[`${segment.key}CurrentMiss`] || 0
+      const maxMiss =
+        strategy.f20?.[`${segment.key}MaxMiss`] || 0
+
+      const score =
+        rate20 * 0.5 +
+        rate30 * 0.3 +
+        rate50 * 0.2 -
+        maxMiss * 0.35
+
+      candidates.push({
+        strategyId: strategy.id,
+        strategyName: strategy.name,
+        strategyLogic: strategy.logic,
+        segmentKey: segment.key,
+        segmentLabel: segment.label,
+        shape: segment.shape,
+        rate20,
+        rate30,
+        rate50,
+        currentMiss,
+        maxMiss,
+        missPriority: currentMiss >= 3,
+        score,
+      })
+    }
+  }
+
+  return candidates.sort((a, b) => {
+    if (a.missPriority !== b.missPriority) {
+      return Number(b.missPriority) -
+        Number(a.missPriority)
+    }
+
+    if (
+      a.missPriority &&
+      b.missPriority &&
+      b.currentMiss !== a.currentMiss
+    ) {
+      return b.currentMiss - a.currentMiss
+    }
+
+    if (b.score !== a.score) {
+      return b.score - a.score
+    }
+
+    if (b.rate20 !== a.rate20) {
+      return b.rate20 - a.rate20
+    }
+
+    return a.maxMiss - b.maxMiss
+  })[0] || null
+}
+
+function buildSingleFrozen30(
+  frozenRows,
+  recommendation
+) {
+  if (
+    !recommendation ||
+    !Array.isArray(frozenRows)
+  ) {
+    return []
+  }
+
+  return frozenRows
+    .slice(0, 30)
+    .map(({ record, draw }) => {
+      const strategy =
+        record?.strategies?.find(
+          (item) =>
+            item.id === recommendation.strategyId
+        )
+
+      if (!strategy) return null
+
+      let predictedShape = ''
+      let actualShape = ''
+      let actualCode = ''
+
+      if (recommendation.segmentKey === 'front') {
+        predictedShape =
+          strategy.frontShapes?.[0] || ''
+        actualShape = draw.frontShape
+        actualCode = draw.front
+      } else if (
+        recommendation.segmentKey === 'middle'
+      ) {
+        predictedShape =
+          strategy.middleShapes?.[0] || ''
+        actualShape = draw.middleShape
+        actualCode = draw.middle
+      } else {
+        predictedShape =
+          strategy.backShapes?.[0] || ''
+        actualShape = draw.backShape
+        actualCode = draw.back
+      }
+
+      return {
+        block: draw.block,
+        actualCode,
+        actualShape,
+        predictedShape,
+        hit: predictedShape === actualShape,
+      }
+    })
+    .filter(Boolean)
+}
+
 function ShapeBadge({ shape }) {
   return (
     <span className={`shape shape-${shape}`}>
@@ -794,6 +928,20 @@ export default function Page() {
   )
 
   const best = ranked[0]
+
+  const singleRecommendation = useMemo(
+    () => buildSinglePriorityPrediction(ranked),
+    [ranked]
+  )
+
+  const singleFrozen30 = useMemo(
+    () => buildSingleFrozen30(
+      frozenRows,
+      singleRecommendation
+    ),
+    [frozenRows, singleRecommendation]
+  )
+
   const latest = history[0]
 
   const amountNumber = Number(betAmount || 0)
@@ -804,30 +952,26 @@ export default function Page() {
   const loseAmount = totalBet
 
   async function copyBest() {
-    if (!best) return
+    if (!singleRecommendation) return
 
-    const text = [
-      `最优形态方案：${best.name}`,
-      `前三：${best.frontShapes.join('、')}`,
-      `中三：${best.middleShapes.join('、')}`,
-      `后三：${best.backShapes.join('、')}`,
-      `前三20期：${fmtPercent(best.f20.frontHitRate)}`,
-      `中三20期：${fmtPercent(best.f20.middleHitRate)}`,
-      `后三20期：${fmtPercent(best.f20.backHitRate)}`,
-      `前三30期：${fmtPercent(best.f30.frontHitRate)}`,
-      `中三30期：${fmtPercent(best.f30.middleHitRate)}`,
-      `后三30期：${fmtPercent(best.f30.backHitRate)}`,
-      `前三50期：${fmtPercent(best.f50.frontHitRate)}`,
-      `中三50期：${fmtPercent(best.f50.middleHitRate)}`,
-      `后三50期：${fmtPercent(best.f50.backHitRate)}`,
+    const item = singleRecommendation
+
+    const copyText = [
+      `下期推荐：${item.segmentLabel}`,
+      `预测：${item.shape}`,
+      `方案：${item.strategyName}`,
+      `近20期：${fmtPercent(item.rate20)}`,
+      `近30期：${fmtPercent(item.rate30)}`,
+      `近50期：${fmtPercent(item.rate50)}`,
+      `当前连错：${item.currentMiss}`,
     ].join('｜')
 
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(copyText)
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
     } catch {
-      alert(text)
+      alert(copyText)
     }
   }
 
@@ -889,26 +1033,34 @@ export default function Page() {
       <div className="wrap">
         <section className="hero">
           <div className="card">
-            <h1>哈希最后5个数字｜每段双选形态优化系统</h1>
+            <h1>哈希倒数5个数字｜单形态优先推荐系统</h1>
 
             <p className="muted">
-              从区块哈希末尾向前寻找5个数字，英文字母全部忽略。
-              取前三位、中间三位、后三位，分别判断：
-              豹子、顺子、对子、杂六、半顺。每一段只预测排名最高的两个形态；
-              例如前三预测“对子、杂六”，实际前三开出其中任意一个即算前三中奖。
-              前三、中三、后三完全分开统计，互不影响；只要任意一段命中，就显示该段中奖。
+              从哈希最右侧开始向左取5个数字，字母全部忽略。
+              下一期只推荐一个位置和一个形态。
+              例如推荐“前三：杂六”，实际前三开出杂六才算中奖；
+              中三和后三不参与这次推荐结果。优先选择当前连续错3期以上的候选，
+              没有错3期候选时，再选择近20/30/50期综合中奖率最高的候选。
             </p>
 
             <div className="best">
-              {best ? (
+              {singleRecommendation ? (
                 <>
                   <div className="best-head">
                     <div>
                       <div className="best-name">
-                        当前最优方案：{best.name}
+                        下期唯一推荐：
+                        {singleRecommendation.segmentLabel}
+                        {' ｜ '}
+                        {singleRecommendation.shape}
                       </div>
+
                       <div className="muted">
-                        {best.logic}｜冻结20/30/50期综合排名
+                        {singleRecommendation.strategyName}
+                        {' ｜ '}
+                        {singleRecommendation.missPriority
+                          ? `当前连续错${singleRecommendation.currentMiss}期，优先推荐`
+                          : '按综合中奖率最高推荐'}
                       </div>
                     </div>
 
@@ -916,91 +1068,93 @@ export default function Page() {
                       className="btn"
                       onClick={copyBest}
                     >
-                      {copied ? '已复制' : '复制最优方案'}
+                      {copied ? '已复制' : '复制唯一推荐'}
                     </button>
                   </div>
 
                   <div
-                    className="triples"
+                    className="box"
                     style={{ marginTop: 12 }}
                   >
-                    <div className="triple">
-                      <div className="label">预测前三</div>
-                      <div className="shapes">
-                        {best.frontShapes.map((shape) => (
-                          <ShapeBadge key={shape} shape={shape} />
-                        ))}
-                      </div>
+                    <div className="label">
+                      唯一预测结果
                     </div>
 
-                    <div className="triple">
-                      <div className="label">预测中三</div>
-                      <div className="shapes">
-                        {best.middleShapes.map((shape) => (
-                          <ShapeBadge key={shape} shape={shape} />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="triple">
-                      <div className="label">预测后三</div>
-                      <div className="shapes">
-                        {best.backShapes.map((shape) => (
-                          <ShapeBadge key={shape} shape={shape} />
-                        ))}
-                      </div>
+                    <div
+                      className="shapes"
+                      style={{ marginTop: 8 }}
+                    >
+                      <ShapeBadge
+                        shape={singleRecommendation.shape}
+                      />
                     </div>
                   </div>
 
-                  <div className="segment-stats">
-                    {[
-                      ['前三', 'front'],
-                      ['中三', 'middle'],
-                      ['后三', 'back'],
-                    ].map(([label, key]) => (
-                      <div className="segment-stat" key={key}>
-                        <h3>{label}独立中奖率</h3>
+                  <div className="stats">
+                    <div className="stat">
+                      <div className="label">近20期</div>
+                      <strong>
+                        {fmtPercent(singleRecommendation.rate20)}
+                      </strong>
+                    </div>
 
-                        <div className="segment-rate-row">
-                          <span>近20期</span>
-                          <strong>
-                            {fmtPercent(best.f20[`${key}HitRate`])}
-                          </strong>
-                          <span>
-                            {best.f20[`${key}HitCount`]}/
-                            {best.f20.testedCount}
-                            ｜连错
-                            {best.f20[`${key}CurrentMiss`]}
-                          </span>
-                        </div>
+                    <div className="stat">
+                      <div className="label">近30期</div>
+                      <strong>
+                        {fmtPercent(singleRecommendation.rate30)}
+                      </strong>
+                    </div>
 
-                        <div className="segment-rate-row">
-                          <span>近30期</span>
-                          <strong>
-                            {fmtPercent(best.f30[`${key}HitRate`])}
-                          </strong>
-                          <span>
-                            {best.f30[`${key}HitCount`]}/
-                            {best.f30.testedCount}
-                            ｜连错
-                            {best.f30[`${key}CurrentMiss`]}
-                          </span>
-                        </div>
+                    <div className="stat">
+                      <div className="label">近50期</div>
+                      <strong>
+                        {fmtPercent(singleRecommendation.rate50)}
+                      </strong>
+                    </div>
+                  </div>
 
-                        <div className="segment-rate-row">
-                          <span>近50期</span>
-                          <strong>
-                            {fmtPercent(best.f50[`${key}HitRate`])}
+                  <div
+                    className="box"
+                    style={{ marginTop: 12 }}
+                  >
+                    <div className="label">
+                      最近30期冻结中奖情况
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                          'repeat(6, minmax(0, 1fr))',
+                        gap: 6,
+                        marginTop: 8,
+                      }}
+                    >
+                      {singleFrozen30.map((item) => (
+                        <div
+                          key={item.block}
+                          style={{
+                            padding: 7,
+                            borderRadius: 9,
+                            textAlign: 'center',
+                            background: item.hit
+                              ? 'rgba(34,197,94,.16)'
+                              : 'rgba(239,68,68,.14)',
+                            border: item.hit
+                              ? '1px solid rgba(74,222,128,.4)'
+                              : '1px solid rgba(248,113,113,.35)',
+                          }}
+                        >
+                          <div>{item.actualCode}</div>
+                          <div>{item.actualShape}</div>
+                          <strong className={
+                            item.hit ? 'good' : 'bad'
+                          }>
+                            {item.hit ? '中' : '未中'}
                           </strong>
-                          <span>
-                            {best.f50[`${key}HitCount`]}/
-                            {best.f50.testedCount}
-                            ｜连错
-                            {best.f50[`${key}CurrentMiss`]}
-                          </span>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </>
               ) : (
@@ -1105,9 +1259,9 @@ export default function Page() {
                     <th>排名</th>
                     <th>方案</th>
                     <th>逻辑</th>
-                    <th>前三双选</th>
-                    <th>中三双选</th>
-                    <th>后三双选</th>
+                    <th>前三单选</th>
+                    <th>中三单选</th>
+                    <th>后三单选</th>
                     <th>前三20/30/50</th>
                     <th>中三20/30/50</th>
                     <th>后三20/30/50</th>
